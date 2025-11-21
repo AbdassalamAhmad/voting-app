@@ -1,0 +1,2 @@
+resources:
+  - keda-2.9.3.yaml
