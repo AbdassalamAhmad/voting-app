@@ -1,0 +1,3 @@
+resources:
+  - result-ingress.yaml
+  - vote-ingress.yaml
