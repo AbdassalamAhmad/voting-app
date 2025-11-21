@@ -1,0 +1,121 @@
+# docker-compose up --build  -d
+# docker compose  --profile seed up --scale worker=10  -d 
+services:
+  # Backend Tier - Internal Services
+  redis:
+    image: redis:8.2.3-alpine
+    container_name: redis
+    networks:
+      - backend
+    volumes:
+      - ./healthchecks:/healthchecks
+    healthcheck:
+      test: /healthchecks/redis.sh
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  db:
+    image: postgres:18
+    container_name: db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    networks:
+      - backend
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./healthchecks:/healthchecks
+    healthcheck:
+      test: /healthchecks/postgres.sh
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+    environment:
+      DATABASE_URL: "Server=db;Username=postgres;Password=postgres;Database=postgres;"
+      REDIS_HOST: redis
+    restart: unless-stopped
+
+  # Frontend Tier - User-Facing Services
+  vote:
+    build:
+      context: ./vote
+      dockerfile: Dockerfile
+    container_name: vote
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - frontend
+      - backend
+    ports:
+      - "8080:8080"
+    environment:
+      REDIS_HOST: redis
+    restart: unless-stopped
+
+  result:
+    build:
+      context: ./result
+      dockerfile: Dockerfile
+    container_name: result
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - frontend
+      - backend
+    ports:
+      - "8081:4000"
+    environment:
+      DATABASE_URL: "postgres://postgres:postgres@db/postgres"
+    restart: unless-stopped
+
+  # Data Seeding Service (optional, runs once)
+  seed:
+    build:
+      context: ./seed-data
+      dockerfile: Dockerfile
+    container_name: seed
+    depends_on:
+      vote:
+        condition: service_started
+      worker:
+        condition: service_started
+    networks:
+      - frontend
+    environment:
+      VOTE_HOST: vote
+      VOTE_PORT: 8080
+    profiles:
+      - seed
+    restart: "no"
+
+
+networks:
+  frontend:
+    driver: bridge
+
+  backend:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
